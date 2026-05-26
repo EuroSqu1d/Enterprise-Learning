@@ -65,6 +65,28 @@ The mitigations baked into `docker-compose.yml` (also explained inline as commen
 | HTTPS port 8920 NOT exposed | Use a reverse proxy for TLS instead — much easier to manage certs centrally |
 | Own docker network (not shared with `monitoring/`) | Media server can't reach Prometheus/Loki or vice versa |
 
+## Lock it down behind Cloudflare Access OTP (recommended)
+
+If you're exposing Jellyfin via the `../cloudflared/` tunnel, put a Cloudflare Access policy in front so only *you* can reach the login page. Uses email one-time PIN — no app to install, works from any browser including locked work laptops.
+
+1. Cloudflare dashboard → **Zero Trust** → **Access** → **Applications** → **Add an application** → **Self-hosted**.
+2. Fill in:
+   - **Application name**: `Jellyfin`
+   - **Session duration**: `24 hours` (or longer if you don't want to re-auth daily)
+   - **Application domain**: `jellyfin.yourdomain.com`
+3. **Next** → add a policy:
+   - **Policy name**: `Me only`
+   - **Action**: `Allow`
+   - **Include** → `Emails` → `your-personal-email@…` (add a second one if you want a backup)
+4. **Next** → leave the rest at defaults → **Add application**.
+
+Now anyone hitting `https://jellyfin.yourdomain.com` first gets a CF email-PIN screen, then Jellyfin's own login. Two layers — even if your Jellyfin password ever leaked, no one without your email reaches the app.
+
+**Heads-up about Jellyfin client apps:** native phone/TV clients can't complete the CF Access email-PIN flow because they don't run a browser. Options:
+- Use the Jellyfin **web client** in a normal browser (works everywhere CF Access works, including work).
+- For native clients, switch to a Cloudflare **service token** policy and configure the clients with the token headers — fiddly, look it up only if you actually need native apps over the public URL.
+- Or simplest: keep the URL public-locked-by-Access for browser/work use, and stream to native apps over Tailscale or LAN only.
+
 ## Adding more libraries
 
 In `docker-compose.yml` duplicate the media volume line:
