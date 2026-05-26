@@ -18,6 +18,7 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | `cloudflared/` | Compose stack | Cloudflare Tunnel — public HTTPS access without opening ports |
 | `uptime-kuma/` | Compose stack | Independent uptime watchdog + public status page |
 | `vaultwarden/` | Compose stack | Self-hosted password manager (Bitwarden-compatible) |
+| `immich/` | Compose stack | Self-hosted photo + video backup (Google Photos replacement) |
 | `backups/` | Reference | NAS-side rsync pattern + restore procedure (no service runs here) |
 
 ## Conventions
@@ -35,8 +36,9 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 4. `jellyfin/` — media server
 5. `uptime-kuma/` — independent uptime watchdog
 6. `vaultwarden/` — password manager
-7. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
-8. (next services go here)
+7. `immich/` — photo + video backup
+8. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
+9. (next services go here)
 
 ## Target host
 
