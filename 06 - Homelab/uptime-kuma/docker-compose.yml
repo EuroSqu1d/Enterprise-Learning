@@ -1,0 +1,53 @@
+# Uptime Kuma: lightweight uptime monitor with a built-in status page.
+#
+# Why this exists alongside Prometheus + Alertmanager + blackbox_exporter
+# (which technically cover the same job):
+#
+#   1. STATUS PAGE — Kuma ships a public-facing status page out of the
+#      box. Grafana can do this but you'd build it yourself. Put the
+#      Kuma URL behind a Cloudflare Access policy that allows anyone
+#      (or just family) and you have a shareable "is the homelab up"
+#      page in 30 seconds.
+#
+#   2. INDEPENDENT WATCHDOG — Kuma stores its own state and probes on
+#      its own schedule. If Prometheus crashes or its rules break, Kuma
+#      still catches outages. Two independent monitoring systems is
+#      genuinely useful — losing both at once is unlikely.
+#
+#   3. PUSH MONITORING — Kuma supports "heartbeat" checks where a cron
+#      job somewhere POSTs to a Kuma URL on success. Lets you monitor
+#      backups, scheduled scripts, anything that runs and should report
+#      in. blackbox_exporter can't do that.
+#
+#   4. CLICK-OPS ADD CHECKS — adding a probe target in the metrics
+#      stack means editing prometheus.yml and reloading. In Kuma it's
+#      a form. Lower friction for one-off "is this thing up" checks.
+#
+# Resource cost: ~50 MB RAM, near-zero CPU. Not heavy.
+
+services:
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.16-alpine
+    container_name: uptime-kuma
+    restart: unless-stopped
+
+    volumes:
+      # SQLite DB, monitor definitions, notification configs, status
+      # page settings. Backed up by the NAS via the docker volumes path.
+      - uptime-kuma-data:/app/data
+
+    ports:
+      # Web UI. First load asks you to create an admin account; no
+      # password needs to be set via env vars (Kuma manages auth itself).
+      - "3001:3001"
+
+    networks:
+      - uptime-kuma
+
+volumes:
+  uptime-kuma-data:
+
+networks:
+  uptime-kuma:
+    name: uptime-kuma

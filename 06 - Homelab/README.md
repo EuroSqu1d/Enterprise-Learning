@@ -13,9 +13,11 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | Folder | What | Purpose |
 |--------|------|---------|
 | `docker/` | Host install | Docker Engine + Compose plugin install scripts |
-| `monitoring/` | Compose stack | Prometheus + Grafana + Node Exporter + cAdvisor + Loki + Promtail |
+| `monitoring/` | Compose stack | Prometheus + Grafana + Alertmanager + Blackbox + Loki + Promtail + Node Exporter + cAdvisor |
 | `jellyfin/` | Compose stack | Self-hosted media server (movies / TV / music) |
 | `cloudflared/` | Compose stack | Cloudflare Tunnel — public HTTPS access without opening ports |
+| `uptime-kuma/` | Compose stack | Independent uptime watchdog + public status page |
+| `backups/` | Reference | NAS-side rsync pattern + restore procedure (no service runs here) |
 
 ## Conventions
 
@@ -27,9 +29,12 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 ## Order of install
 
 1. `docker/` — install Docker on the host
-2. `monitoring/` — bring up the metrics + logs stack
-3. `jellyfin/` — media server
-4. (next services go here)
+2. `monitoring/` — bring up the metrics + logs + alerts stack
+3. `cloudflared/` — public access via Cloudflare Tunnel
+4. `jellyfin/` — media server
+5. `uptime-kuma/` — independent uptime watchdog
+6. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
+7. (next services go here)
 
 ## Target host
 
