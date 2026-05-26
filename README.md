@@ -15,6 +15,7 @@ This repo documents the processes, troubleshooting steps, and lessons learned fr
 | `03 - Networking/` | VLANs, tunnels, firewall rules, DNS |
 | `04 - Security/` | Access control, Zero Trust, certificate management |
 | `05 - Cloud/` | Hybrid cloud integration, Azure Arc, Cloudflare |
+| `06 - Homelab/` | Install scripts and compose stacks for self-hosted services (Docker, Grafana, …) |
 
 ## Hardware in Use
 
