@@ -1,0 +1,24 @@
+# Extra log sources for CrowdSec to monitor. The base acquis.yaml
+# from the image already covers /var/log/auth.log, syslog, etc.
+# This file adds the docker container logs so app-level attacks
+# (Vaultwarden login brute force, Immich auth abuse, Grafana login
+# scanning) get caught too.
+#
+# Same mount path as Promtail uses — both can read concurrently
+# because mounts are read-only.
+
+# Vaultwarden — failed logins log the source IP (CF-Connecting-IP)
+# because we set IP_HEADER=CF-Connecting-IP in its compose env.
+filenames:
+  - /var/lib/docker/containers/*/*-json.log
+labels:
+  type: docker
+
+---
+# Auth.log specifically — caught by base acquis.yaml already, repeated
+# here as documentation for what's being watched. Comment out the
+# block if you want to disable.
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog

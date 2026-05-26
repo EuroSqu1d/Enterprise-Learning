@@ -19,6 +19,8 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | `uptime-kuma/` | Compose stack | Independent uptime watchdog + public status page |
 | `vaultwarden/` | Compose stack | Self-hosted password manager (Bitwarden-compatible) |
 | `immich/` | Compose stack | Self-hosted photo + video backup (Google Photos replacement) |
+| `crowdsec/` | Compose stack | Behavioural IPS — blocks attackers at the Cloudflare edge |
+| `speedtest-tracker/` | Compose stack | Scheduled Ookla speedtests, graphs into Grafana |
 | `backups/` | Reference | NAS-side rsync pattern + restore procedure (no service runs here) |
 
 ## Conventions
@@ -37,8 +39,10 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 5. `uptime-kuma/` — independent uptime watchdog
 6. `vaultwarden/` — password manager
 7. `immich/` — photo + video backup
-8. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
-9. (next services go here)
+8. `crowdsec/` — IPS + Cloudflare bouncer
+9. `speedtest-tracker/` — internet quality history
+10. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
+11. (next services go here)
 
 ## Target host
 

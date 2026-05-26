@@ -1,0 +1,73 @@
+# Speedtest Tracker: runs Ookla speedtest on a schedule and stores the
+# results. Pretty web UI for graphs, plus a Prometheus metrics endpoint
+# so your existing Grafana picks the data up alongside everything else.
+# Catches "is my ISP throttling me?" patterns that only show up over
+# weeks of data.
+#
+# Same conventions as the rest of the stack:
+#   - Pinned image tag.
+#   - SQLite DB in a named volume (light enough not to need Postgres).
+#   - Bridge network, host port published so Prometheus can scrape.
+#   - APP_KEY required via `:?` guard — Laravel app refuses to start
+#     without one, and a placeholder default would be insecure.
+#   - Runs as host user via PUID/PGID, not root.
+
+services:
+
+  speedtest-tracker:
+    image: ghcr.io/alexjustesen/speedtest-tracker:v0.21.2
+    container_name: speedtest-tracker
+    restart: unless-stopped
+
+    # Run as your host user — same trick as Jellyfin.
+    # Find values with: id -u  and  id -g
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+
+      # Laravel app key. Required. Generate ONCE with:
+      #   docker run --rm ghcr.io/alexjustesen/speedtest-tracker:v0.21.2 \
+      #     php artisan key:generate --show
+      # then paste into .env as APP_KEY=base64:...
+      APP_KEY: ${APP_KEY:?set in .env — see README}
+
+      # Default DB is SQLite which is perfect for a single-host
+      # speedtest log. Don't switch to mysql/postgres unless you have
+      # a real reason — adds dependencies for no value.
+      DB_CONNECTION: sqlite
+
+      # Schedule for the speedtest. Cron syntax. Default below = once
+      # per hour at minute 0. Bump to "*/15 * * * *" if you want
+      # 15-minute granularity (more data, slightly more bandwidth use).
+      SPEEDTEST_SCHEDULE: ${SPEEDTEST_SCHEDULE:-0 * * * *}
+
+      # Pin specific Ookla server IDs to test against. Comma-separated.
+      # Find IDs at https://www.speedtest.net/speedtest-servers.php or
+      # by running `docker exec speedtest-tracker speedtest --servers`.
+      # Empty = auto-pick best server each run (fine, default).
+      SPEEDTEST_SERVERS: ${SPEEDTEST_SERVERS:-}
+
+      # Prometheus metrics endpoint. Off by default — turn on so the
+      # existing monitoring/ stack can scrape it.
+      PROMETHEUS_ENABLED: "true"
+
+    volumes:
+      # App config, SQLite DB, test history.
+      - speedtest-data:/config
+      # Container clock matches host — keeps "today" filters sane.
+      - /etc/localtime:/etc/localtime:ro
+
+    ports:
+      # Web UI + API + /api/metrics/prometheus.
+      - "8765:80"
+
+    networks:
+      - speedtest
+
+volumes:
+  speedtest-data:
+
+networks:
+  speedtest:
+    name: speedtest

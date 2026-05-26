@@ -1,0 +1,107 @@
+# CrowdSec: behavioural intrusion detection. Reads logs, identifies
+# attackers from scenarios (SSH brute force, web scanning, etc.),
+# decides what to block, and tells "bouncers" to enforce those blocks.
+# Also pulls a community-shared blocklist of known-bad IPs.
+#
+# Two services in this stack:
+#   1. crowdsec        - the agent. Tails logs, runs scenarios, holds
+#                        the local decisions DB. Talks to bouncers via
+#                        its local API on port 8080 (not exposed to host).
+#   2. cf-bouncer      - Cloudflare bouncer. Reads decisions from the
+#                        agent, pushes blocked IPs to Cloudflare's IP
+#                        Access Rules so attackers get stopped at the
+#                        CF edge before they ever reach your tunnel.
+#
+# Why this design for your setup:
+#   - Your only public-facing surface is the CF tunnel. The relevant
+#     attack signal is "someone is hammering Vaultwarden/Immich/Grafana
+#     via the public URLs". Logs from those containers contain the
+#     real client IP (CF-Connecting-IP) because we set IP_HEADER on
+#     the apps that support it.
+#   - Blocking at CF's edge is much cheaper than blocking on the host
+#     (the request never enters your network). That's what the CF
+#     bouncer is for.
+#   - SSH brute force on the host's public IP is the other concern. The
+#     README explains how to add the firewall-bouncer as a systemd
+#     service on the host for that — keeping it off the host network
+#     namespace inside docker is cleaner than `network_mode: host`.
+#
+# Same conventions as the rest of the stack: pinned tags, secrets via
+# .env, read-only log mounts, dedicated docker network.
+
+services:
+
+  # ----- CrowdSec agent ---------------------------------------------------
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.6.3
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      # Collections = bundles of parsers + scenarios. These cover Linux
+      # host, SSH, generic web attacks. Add more later via:
+      #   docker exec crowdsec cscli collections install <name>
+      COLLECTIONS: >-
+        crowdsecurity/linux
+        crowdsecurity/sshd
+        crowdsecurity/base-http-scenarios
+        crowdsecurity/http-cve
+      # Custom acquisitions (what to read) live in acquis.d/ — see below.
+      # The default acquis.yaml in the image also gets used.
+      GID: "${GID:-1000}"
+      # The CrowdSec central console (free, optional) gives you a web
+      # dashboard of your alerts + community blocklist visibility. Get
+      # an enrollment key from https://app.crowdsec.net and set this:
+      ENROLL_KEY: ${CROWDSEC_ENROLL_KEY:-}
+      ENROLL_INSTANCE_NAME: homelab
+
+    volumes:
+      # Persistent state: SQLite DB of decisions, machine IDs, etc.
+      - crowdsec-db:/var/lib/crowdsec/data
+      # Config volume — agent registrations and tweaks persist here.
+      - crowdsec-config:/etc/crowdsec
+      # Log sources (read-only):
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Extra acquisition configs we ship in-repo.
+      - ./acquis.d:/etc/crowdsec/acquis.d:ro
+
+    networks:
+      - crowdsec
+
+  # ----- Cloudflare bouncer -----------------------------------------------
+  # Pulls decisions from the CrowdSec agent's local API and pushes them
+  # to Cloudflare as IP Access Rules. Attackers get rejected at CF's
+  # edge — they never reach your tunnel.
+  cf-bouncer:
+    image: crowdsecurity/cloudflare-bouncer:v0.3.1
+    container_name: crowdsec-cf-bouncer
+    restart: unless-stopped
+    depends_on:
+      - crowdsec
+    environment:
+      # The bouncer's API key for talking to CrowdSec. Generated on
+      # first run via cscli (see README step 4). Pasted into .env.
+      BOUNCER_KEY_CF: ${BOUNCER_KEY_CF:?set in .env}
+      # Cloudflare API token with Zone:WAF:Edit on your zone. Created
+      # in the CF dashboard (see README step 5).
+      CF_API_TOKEN: ${CF_API_TOKEN:?set in .env}
+      # Comma-separated list of zone IDs the bouncer is allowed to
+      # touch. Find under your domain's overview page in CF dashboard.
+      CF_ZONE_IDS: ${CF_ZONE_IDS:?set in .env}
+
+    volumes:
+      # Bouncer config persisted so cscli-managed bouncer registration
+      # survives container recreation.
+      - cf-bouncer-config:/etc/crowdsec/bouncers
+
+    networks:
+      - crowdsec
+
+volumes:
+  crowdsec-db:
+  crowdsec-config:
+  cf-bouncer-config:
+
+networks:
+  crowdsec:
+    name: crowdsec
