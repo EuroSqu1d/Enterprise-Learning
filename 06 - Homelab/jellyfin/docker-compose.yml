@@ -1,0 +1,88 @@
+# Jellyfin: free, self-hosted media server (movies / TV / music / books).
+# Web UI at http://<host>:8096 once running. First user you create is the admin.
+#
+# Design notes (same posture as the monitoring stack):
+#   - Pinned image tag (no :latest -> no silent upgrades or image swaps).
+#   - Bridge network with explicit port mapping (NOT host networking).
+#     You lose DLNA / Chromecast auto-discovery, but the container can't
+#     see the host's network interfaces. Re-add DLNA via a reverse proxy
+#     or a multicast relay if you actually need it.
+#   - Media mounted READ-ONLY. Jellyfin only needs to scan files, never
+#     rename or delete them. If a plugin or vuln ever runs wild, your
+#     library can't be modified.
+#   - Runs as your host user (PUID/PGID from .env), NOT root. Stops the
+#     container from creating files inside /media that you can't touch.
+#   - Config + cache live in named docker volumes, not bind mounts, so
+#     nothing accidentally ends up committed to this repo.
+#   - Hardware transcoding (Intel/AMD iGPU) is OFF by default. Opt in by
+#     uncommenting the `devices:` block below.
+#   - HTTPS port (8920) intentionally NOT exposed. Put a reverse proxy
+#     (Traefik/Caddy/nginx) in front for TLS — Jellyfin's own TLS is
+#     fiddly and gets in the way of LAN clients.
+
+services:
+
+  jellyfin:
+    image: jellyfin/jellyfin:10.10.3
+    container_name: jellyfin
+    restart: unless-stopped
+
+    # Run as the host user that owns your media files. Default 1000:1000
+    # is the first non-root user on a fresh Ubuntu/Debian install. Find
+    # yours with `id -u` and `id -g`, then set PUID/PGID in .env.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    environment:
+      # Timezone affects log timestamps and scheduled tasks.
+      TZ: ${TZ:-Etc/UTC}
+      # The URL Jellyfin tells clients to call back on. Set this to the
+      # address you'll actually reach the server at (LAN IP, hostname,
+      # or reverse-proxy URL). Wrong value -> remote clients can connect
+      # but media playback URLs point to the wrong host.
+      JELLYFIN_PublishedServerUrl: ${JELLYFIN_URL:-http://localhost:8096}
+
+    volumes:
+      # Database, plugin state, user accounts, metadata cache. Lives in
+      # a named volume so it survives `docker compose down` but is
+      # cleanly removed by `docker compose down -v`.
+      - jellyfin-config:/config
+      # Transcoding scratch space. Can get large; safe to wipe by
+      # removing the volume — Jellyfin rebuilds as needed.
+      - jellyfin-cache:/cache
+      # Your media library. Bind mount from a host path you set in .env.
+      # Read-only (:ro) — see security notes above. To add more
+      # libraries, copy this line with another :ro mount, e.g.
+      #   - ${MUSIC_PATH}:/media/music:ro
+      - ${MEDIA_PATH:-/srv/media}:/media:ro
+
+    ports:
+      # Web UI / API. Reverse-proxy this for TLS in a real deployment.
+      - "8096:8096"
+
+    # ----- Hardware transcoding (OPTIONAL) --------------------------------
+    # Uncomment if the host has an Intel or AMD GPU and you want
+    # GPU-accelerated transcoding (QSV / VAAPI). On most consumer
+    # Intel CPUs this is a massive win for 4K → 1080p remote streams.
+    # You also need to enable "Hardware acceleration" in Jellyfin's
+    # admin dashboard once it's running.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "${RENDER_GID:-104}"   # check with: getent group render | cut -d: -f3
+    # ----------------------------------------------------------------------
+
+    networks:
+      - jellyfin
+
+# Named volumes — managed by docker, live under /var/lib/docker/volumes/.
+# `docker compose down` keeps them; `docker compose down -v` wipes them.
+volumes:
+  jellyfin-config:
+  jellyfin-cache:
+
+# Dedicated bridge network. Not joining `monitoring` because Jellyfin
+# doesn't need to talk to Prometheus/Loki and they don't need to talk
+# to it. Smaller blast radius if anything in either stack misbehaves.
+networks:
+  jellyfin:
+    name: jellyfin

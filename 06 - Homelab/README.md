@@ -13,7 +13,8 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | Folder | What | Purpose |
 |--------|------|---------|
 | `docker/` | Host install | Docker Engine + Compose plugin install scripts |
-| `monitoring/` | Compose stack | Prometheus + Grafana + Node Exporter + cAdvisor |
+| `monitoring/` | Compose stack | Prometheus + Grafana + Node Exporter + cAdvisor + Loki + Promtail |
+| `jellyfin/` | Compose stack | Self-hosted media server (movies / TV / music) |
 
 ## Conventions
 
@@ -25,8 +26,9 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 ## Order of install
 
 1. `docker/` — install Docker on the host
-2. `monitoring/` — bring up the metrics stack
-3. (next services go here)
+2. `monitoring/` — bring up the metrics + logs stack
+3. `jellyfin/` — media server
+4. (next services go here)
 
 ## Target host
 
