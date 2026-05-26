@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# Loki is reachable from Grafana via the docker service name `loki` on the
+# shared `monitoring` network. Port 3100 is NOT published to the host.
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    # Prometheus stays the default for ad-hoc queries; flip this to true
+    # if you spend more time in Explore on logs than metrics.
+    isDefault: false
+    editable: false
+    jsonData:
+      # Cap how many log lines a single panel/query can pull back.
+      # Defaults are higher; lower bounds keep dashboards responsive.
+      maxLines: 1000

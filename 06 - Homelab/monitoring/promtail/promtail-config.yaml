@@ -1,0 +1,128 @@
+# Promtail config: ships logs from the host into Loki.
+#
+# Design notes (security mitigations):
+#   - NO docker socket mounted. Promtail discovers containers by reading
+#     /var/lib/docker/containers/*/*-json.log directly. Container *names*
+#     come from the `tag` log-opt we set in /etc/docker/daemon.json
+#     (ImageName/Name/ID), not from the docker API.
+#   - All host mounts are read-only (see docker-compose.yml).
+#   - Loki endpoint is the docker service name `loki`, reachable only via
+#     the `monitoring` docker network (no host port published).
+#   - Pipeline `replace` stages scrub common secret patterns before ingest.
+#
+# Docs: https://grafana.com/docs/loki/latest/send-data/promtail/configuration/
+
+server:
+  # Promtail's own HTTP server (metrics, ready check). Not exposed to host.
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  # Tracks "how far through each log file have I read". Persists across
+  # restarts so we don't re-ship everything after a reboot. Backed by the
+  # `promtail-positions` named volume in docker-compose.yml.
+  filename: /tmp/positions/positions.yaml
+
+clients:
+  # Where to push logs. Plain HTTP is fine because the connection never
+  # leaves the `monitoring` docker network.
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # ----------------------------------------------------------------------
+  # Host /var/log files — auth.log, syslog, kern.log, etc.
+  # ----------------------------------------------------------------------
+  - job_name: host-varlog
+    static_configs:
+      - targets: [localhost]
+        labels:
+          # `job` and `host` become Loki labels. Use them in LogQL like:
+          #   {job="varlogs", host="homelab"} |= "Failed password"
+          job: varlogs
+          host: homelab
+          # __path__ is the special label that tells Promtail which files
+          # to tail. Glob expands at startup AND when new files appear.
+          __path__: /var/log/*.log
+
+    pipeline_stages:
+      # Scrub obvious credential patterns BEFORE the line is sent to Loki.
+      # Once a secret hits Loki it lives in the index for the full
+      # retention period and is queryable by anyone with Grafana access.
+      - replace:
+          expression: 'Bearer [A-Za-z0-9._\-]+'
+          replace: 'Bearer [REDACTED]'
+      - replace:
+          expression: '(?i)(password|passwd|pwd)=\S+'
+          replace: '$1=[REDACTED]'
+      - replace:
+          # AWS access key ID format. Add similar lines for other vendor
+          # key formats (GitHub PAT `ghp_`, Slack `xoxb-`, etc.) as needed.
+          expression: 'AKIA[0-9A-Z]{16}'
+          replace: '[REDACTED-AWS-KEY]'
+
+  # ----------------------------------------------------------------------
+  # Docker container logs.
+  #
+  # Each container's stdout/stderr is written by the docker daemon to:
+  #   /var/lib/docker/containers/<id>/<id>-json.log
+  # We tail every one of those. Lines look like:
+  #   {"log":"...message...\n","stream":"stdout","time":"...","attrs":{"tag":"image/name/id"}}
+  # The `attrs.tag` field exists because daemon.json sets
+  # `log-opts.tag = "{{.ImageName}}/{{.Name}}/{{.ID}}"`. Without that tag
+  # we'd only have the container ID from the filename.
+  # ----------------------------------------------------------------------
+  - job_name: docker-containers
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: docker
+          host: homelab
+          __path__: /var/lib/docker/containers/*/*-json.log
+
+    pipeline_stages:
+      # 1. Parse the outer docker JSON envelope -> pull out the actual log
+      #    line (`output`), the stream (stdout/stderr), and attrs.
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+
+      # 2. attrs is itself a JSON object; pull out the `tag` we set in
+      #    daemon.json.
+      - json:
+          source: attrs
+          expressions:
+            tag: tag
+
+      # 3. Split "image/name/id" into named groups.
+      - regex:
+          source: tag
+          expression: '^(?P<image>[^/]+)/(?P<container>[^/]+)/(?P<container_id>.+)$'
+
+      # 4. Promote `image` and `container` to Loki labels so you can query
+      #    {container="grafana"} directly. Leaving container_id off labels
+      #    keeps cardinality lower (one label value per container is OK,
+      #    one per ID would explode after enough restarts).
+      - labels:
+          image:
+          container:
+          stream:
+
+      # 5. Replace the raw JSON envelope with just the extracted log line —
+      #    Grafana shows clean output instead of {"log":"...","stream":...}.
+      - output:
+          source: output
+
+      # 6. Same secret scrubbing as above. Promtail evaluates these in
+      #    order so they run AFTER the JSON is unwrapped.
+      - replace:
+          expression: 'Bearer [A-Za-z0-9._\-]+'
+          replace: 'Bearer [REDACTED]'
+      - replace:
+          expression: '(?i)(password|passwd|pwd)=\S+'
+          replace: '$1=[REDACTED]'
+      - replace:
+          expression: 'AKIA[0-9A-Z]{16}'
+          replace: '[REDACTED-AWS-KEY]'

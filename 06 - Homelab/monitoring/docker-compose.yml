@@ -1,32 +1,60 @@
+# Homelab monitoring stack: metrics (Prometheus + exporters) and logs
+# (Loki + Promtail), visualised in Grafana.
+#
+# Image tags are PINNED. Bumping is a deliberate one-line change:
+#   1. Update the tag below.
+#   2. `docker compose pull && docker compose up -d`.
+#   3. Check `docker compose ps` and the Grafana datasource health page.
+# Don't switch to `:latest` — silent upgrades break dashboards and
+# config schemas, and an image swap could ship hostile code unnoticed.
+
 services:
+
+  # ======================================================================
+  # METRICS
+  # ======================================================================
+
+  # Prometheus: time-series DB. Scrapes /metrics endpoints on the
+  # interval defined in prometheus/prometheus.yml.
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.54.1
     container_name: prometheus
     restart: unless-stopped
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      # Retention: how long to keep raw samples. 30d is plenty for a homelab.
       - '--storage.tsdb.retention.time=30d'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+      # Allows `curl -X POST http://prometheus:9090/-/reload` to pick up
+      # config changes without restarting the container.
       - '--web.enable-lifecycle'
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
+      # Published so you can hit the Prometheus UI directly. Remove this
+      # line if you only want to query it through Grafana.
       - "9090:9090"
     networks:
       - monitoring
 
+  # Node Exporter: scrapes host CPU/RAM/disk/network/etc. into Prometheus.
+  # Runs in the host's PID namespace so it can see real process counts.
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.8.2
     container_name: node-exporter
     restart: unless-stopped
     pid: host
     command:
+      # Tell the exporter to read host metrics from the read-only mounts
+      # below, not from inside its own container.
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
+      # Exclude pseudo-filesystems from disk metrics — otherwise the
+      # dashboards get noisy with tmpfs/overlayfs entries.
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     volumes:
       - /proc:/host/proc:ro
@@ -37,8 +65,11 @@ services:
     networks:
       - monitoring
 
+  # cAdvisor: per-container CPU/RAM/network metrics for Prometheus.
+  # Needs privileged + /dev/kmsg to read kernel cgroup counters. Standard
+  # for cAdvisor — not a config you can tighten.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
     restart: unless-stopped
     privileged: true
@@ -55,16 +86,87 @@ services:
     networks:
       - monitoring
 
+  # ======================================================================
+  # LOGS
+  # ======================================================================
+
+  # Loki: log storage. Receives pushes from Promtail.
+  # SECURITY: no `ports:` block — Loki is only reachable from inside the
+  # `monitoring` docker network (Grafana + Promtail). The host doesn't
+  # expose 3100. Anyone wanting to query logs must do so via Grafana.
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - monitoring
+    # Loki refuses writes until it's fully started; ingester startup can
+    # take 10-20s. Healthcheck so Promtail's `depends_on` actually waits.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Promtail: log shipper. Tails host /var/log and per-container docker
+  # log files, applies pipeline transforms (secret scrubbing, label
+  # extraction), pushes to Loki.
+  #
+  # SECURITY mitigations applied:
+  #   - No /var/run/docker.sock mount. Discovery is file-glob based.
+  #     The trade-off (container names) is solved by the `tag` log-opt
+  #     in /etc/docker/daemon.json — see ../docker/daemon.json.
+  #   - All host mounts are read-only.
+  #   - Container is non-privileged.
+  #   - Pinned tag (no silent image swaps).
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      loki:
+        condition: service_healthy
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      # Host system logs.
+      - /var/log:/var/log:ro
+      # Docker container log files. Read-only — Promtail cannot modify or
+      # delete them, and cannot reach the docker socket.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Positions file — Promtail remembers how far it's read in each log
+      # file. Survives container restarts so we don't re-ship everything.
+      - promtail-positions:/tmp/positions
+    networks:
+      - monitoring
+
+  # ======================================================================
+  # VISUALISATION
+  # ======================================================================
+
+  # Grafana: dashboards for both Prometheus (metrics) and Loki (logs).
+  # Datasources and dashboard providers are provisioned from files so the
+  # stack is fully reproducible — nothing important lives only in the UI.
   grafana:
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:11.2.0
     container_name: grafana
     restart: unless-stopped
     depends_on:
       - prometheus
+      - loki
     environment:
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      # `:?` makes compose refuse to start if this isn't set in .env —
+      # stops you accidentally running Grafana with the literal string
+      # "changeme" as the admin password.
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?set in .env}
       GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-http://localhost:3000}
+      # Disable the public sign-up form; only the admin can create users.
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana-data:/var/lib/grafana
@@ -75,10 +177,16 @@ services:
     networks:
       - monitoring
 
+# Named volumes live under /var/lib/docker/volumes/ on the host. Survive
+# `docker compose down`; only deleted by `docker compose down -v`.
 volumes:
   prometheus-data:
   grafana-data:
+  loki-data:
+  promtail-positions:
 
+# Single user-defined bridge network. Docker's built-in DNS lets services
+# resolve each other by name (e.g. `http://prometheus:9090`).
 networks:
   monitoring:
     name: monitoring

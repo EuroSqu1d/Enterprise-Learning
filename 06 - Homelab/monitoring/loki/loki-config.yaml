@@ -1,0 +1,74 @@
+# Loki single-binary configuration for a homelab.
+# Loki is a log aggregation system from Grafana Labs - think "Prometheus for logs".
+# Promtail (or any other shipper) pushes log lines here, then you query them
+# in Grafana using LogQL (same syntax style as PromQL).
+#
+# Docs: https://grafana.com/docs/loki/latest/configuration/
+
+# auth_enabled=false: single-tenant mode. Loki normally supports multi-tenancy
+# via an X-Scope-OrgID header. For a homelab we just want a single logical
+# tenant ("fake") with no auth — Loki is firewalled inside the docker network
+# anyway (no host port exposed; see docker-compose.yml).
+auth_enabled: false
+
+server:
+  # Port Promtail and Grafana hit. Only reachable from inside the
+  # `monitoring` docker network because we don't publish it to the host.
+  http_listen_port: 3100
+  # gRPC port used by Loki's internal components (ingester -> querier etc.).
+  # Single-binary mode still listens, just locally.
+  grpc_listen_port: 9096
+  # Keep logs from Loki itself terse; bump to debug if you're troubleshooting.
+  log_level: info
+
+common:
+  # Everything (chunks, rules, compactor state) lives under /loki in the
+  # container, which is backed by the `loki-data` named volume.
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  # Single-node = no replication.
+  replication_factor: 1
+  ring:
+    # In-memory ring instead of consul/etcd — fine for one node.
+    kvstore:
+      store: inmemory
+
+schema_config:
+  # Defines how Loki lays out its index on disk. v13 + tsdb is the current
+  # recommended combo (2024+). The `from` date must be in the past;
+  # changing it later requires adding a new entry, not editing this one.
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Retention. 720h = 30 days, matching our Prometheus retention.
+  # Bump for longer history at the cost of disk.
+  retention_period: 720h
+  # Reject log lines older than 7 days at ingest time (sane sanity check).
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Per-stream rate limits. Defaults are low for a homelab where a chatty
+  # container can easily produce a few MB/s of logs during incidents.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+
+compactor:
+  # The compactor periodically merges index files and enforces retention.
+  # Without retention_enabled=true your `retention_period` above is ignored.
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+# Disable telemetry reporting back to Grafana Labs. Optional; remove if you
+# don't mind helping them with anonymous usage stats.
+analytics:
+  reporting_enabled: false

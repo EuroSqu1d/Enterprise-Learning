@@ -1,9 +1,14 @@
 apiVersion: 1
 
+# Prometheus is reachable from Grafana via the docker service name
+# `prometheus` on the shared `monitoring` network.
 datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
+    # Default datasource for new panels / Explore.
     isDefault: true
+    # editable: false locks the UI — config changes must go through this
+    # file. Stops dashboard authors from accidentally repointing things.
     editable: false

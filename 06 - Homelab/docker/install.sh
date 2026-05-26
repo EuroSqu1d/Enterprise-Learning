@@ -71,7 +71,8 @@ if [[ ! -f /etc/docker/daemon.json ]]; then
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
-    "max-file": "3"
+    "max-file": "3",
+    "tag": "{{.ImageName}}/{{.Name}}/{{.ID}}"
   }
 }
 JSON
