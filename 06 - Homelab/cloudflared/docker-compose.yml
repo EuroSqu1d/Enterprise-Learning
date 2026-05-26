@@ -1,0 +1,63 @@
+# Cloudflare Tunnel (cloudflared): outbound-only secure tunnel from this
+# host to Cloudflare's edge. Lets you reach services here from anywhere
+# on the public internet — including locked-down work networks where
+# VPN apps (Tailscale, WireGuard) are blocked — by visiting
+#   https://<your-hostname>.<your-domain>
+# in a normal browser.
+#
+# How it works at a glance:
+#   1. Your tunnel is defined in the Cloudflare Zero Trust dashboard.
+#      That's where you tell CF "hostname grafana.example.com goes to
+#      http://host.docker.internal:3000".
+#   2. The dashboard gives you a TUNNEL_TOKEN (a long opaque string).
+#   3. This container runs cloudflared with that token. cloudflared
+#      opens an outbound persistent connection to Cloudflare's edge.
+#   4. When a request hits https://grafana.example.com, CF forwards it
+#      down that connection. cloudflared then makes an HTTP request to
+#      the local service and pipes the response back.
+#
+# Design notes (same conventions as the rest of the stack):
+#   - Pinned image tag. cloudflared ships monthly; bumping is a one-line
+#     change. Don't use :latest — the protocol can change.
+#   - No `ports:` block. The tunnel is OUTBOUND ONLY. Nothing on this
+#     host is exposed to the public internet directly; the public
+#     surface is CF's edge, not your router.
+#   - `extra_hosts: host-gateway` lets cloudflared reach services
+#     published on the host's localhost (Grafana on :3000, Jellyfin
+#     on :8096) without joining their docker networks or running in
+#     host network mode.
+#   - Own bridge network. Cloudflared can't see Prometheus, Loki, or
+#     Jellyfin's internal traffic — only the ports they've already
+#     published to the host.
+#   - TUNNEL_TOKEN failsafe: `:?` makes compose refuse to start if the
+#     token isn't set, instead of silently launching a broken tunnel.
+
+services:
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.1
+    container_name: cloudflared
+    restart: unless-stopped
+
+    # Run the tunnel using a token. --no-autoupdate stops the container
+    # from in-place upgrading itself; we manage versions explicitly via
+    # the pinned image tag, so a runaway autoupdate would conflict.
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set in .env}
+
+    # Lets cloudflared resolve host.docker.internal -> the host's gateway
+    # IP. Use that hostname when defining routes in the CF dashboard:
+    #   service: http://host.docker.internal:3000   (Grafana)
+    #   service: http://host.docker.internal:8096   (Jellyfin)
+    # Works because Grafana and Jellyfin both publish their ports to the
+    # host. No edits to their compose files needed.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    name: cloudflared

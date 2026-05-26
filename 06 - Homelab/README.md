@@ -15,6 +15,7 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | `docker/` | Host install | Docker Engine + Compose plugin install scripts |
 | `monitoring/` | Compose stack | Prometheus + Grafana + Node Exporter + cAdvisor + Loki + Promtail |
 | `jellyfin/` | Compose stack | Self-hosted media server (movies / TV / music) |
+| `cloudflared/` | Compose stack | Cloudflare Tunnel — public HTTPS access without opening ports |
 
 ## Conventions
 
