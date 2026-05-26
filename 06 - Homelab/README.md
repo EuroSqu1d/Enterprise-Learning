@@ -2,6 +2,8 @@
 
 Installation scripts, compose stacks, and configuration for the services running in the homelab.
 
+> **New to this?** Read **[GUIDE.md](./GUIDE.md)** first — it explains every piece in plain English, why the configs look the way they do, and walks you through bringing the whole stack up from a fresh server. The READMEs in each subfolder are reference docs, not tutorials.
+
 ## Why one repo
 
 Single repo, one subdirectory per service (or per tightly-coupled stack). Easier to clone, search across, and share config (networks, secrets, reverse-proxy routes) between stacks. Split a service into its own repo only if it outgrows this layout.
