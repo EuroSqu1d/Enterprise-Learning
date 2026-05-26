@@ -1,0 +1,106 @@
+# Vaultwarden: self-hosted password manager, API-compatible with the
+# official Bitwarden clients (browser extensions, mobile apps, desktop
+# apps, CLI). Lighter and friendlier to run than upstream Bitwarden.
+#
+# How you use it: install the Bitwarden browser extension / mobile
+# app like normal, but point it at your homelab's URL instead of
+# bitwarden.com. Everything sync-related Just Works.
+#
+# Design notes (same conventions as the rest of the stack):
+#   - Pinned image tag.
+#   - SIGNUPS_ALLOWED defaults to FALSE for safety. You flip it to true
+#     in .env just long enough to create your own account, then back
+#     to false so no one else can register.
+#   - DOMAIN is REQUIRED (`:?` failsafe). Vaultwarden generates URLs
+#     in email invites etc.; if DOMAIN is wrong, those links go to
+#     the wrong place.
+#   - ADMIN_TOKEN is OPTIONAL. Leaving it empty disables the /admin
+#     panel entirely — safer default. Set it only when you need the
+#     panel, then unset.
+#   - Own docker network. Vaultwarden doesn't need to talk to anything
+#     else in the homelab.
+#   - The CF Tunnel sits in front for HTTPS — do NOT expose this
+#     directly to the public internet without TLS (Bitwarden clients
+#     refuse plain-HTTP servers).
+
+services:
+
+  vaultwarden:
+    image: vaultwarden/server:1.32.5
+    container_name: vaultwarden
+    restart: unless-stopped
+
+    environment:
+      # ----- Required ----------------------------------------------------
+      # The public URL clients use to reach this server. Must be HTTPS
+      # in production (Bitwarden apps reject http://). Set in .env to
+      # match your CF tunnel route, e.g. https://vault.yourdomain.com.
+      DOMAIN: ${DOMAIN:?set in .env}
+
+      # ----- Account control ---------------------------------------------
+      # Who can register a new account. Default false so the world
+      # can't sign up to your server. Flip to true only while creating
+      # your own account, then back to false.
+      SIGNUPS_ALLOWED: ${SIGNUPS_ALLOWED:-false}
+      # Lets existing users invite others by email. Independent of
+      # SIGNUPS_ALLOWED — invited users can join even when signups are
+      # closed. Safe to leave on.
+      INVITATIONS_ALLOWED: ${INVITATIONS_ALLOWED:-true}
+
+      # ----- Admin panel -------------------------------------------------
+      # Empty (default) = /admin is disabled entirely.
+      # Set this to a long random string (or argon2 hash — see README)
+      # ONLY when you actually need the admin panel. Unset it again
+      # afterwards. The token is effectively root for your vault server.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+
+      # ----- Features ----------------------------------------------------
+      # Bitwarden Send (share files/text via expiring links). Useful.
+      SENDS_ALLOWED: ${SENDS_ALLOWED:-true}
+      # Emergency Access (grant a trusted contact recovery rights).
+      EMERGENCY_ACCESS_ALLOWED: ${EMERGENCY_ACCESS_ALLOWED:-true}
+      # Web vault (browser UI at /). Off would force you to use only
+      # the apps; usually leave on.
+      WEB_VAULT_ENABLED: ${WEB_VAULT_ENABLED:-true}
+
+      # ----- Proxy / IP handling -----------------------------------------
+      # Vaultwarden logs the client IP for failed-login throttling.
+      # Behind cloudflared the X-Forwarded-For points at CF's edge, but
+      # CF also sets CF-Connecting-IP with the real client IP — read
+      # that one instead so per-IP rate limits work properly.
+      IP_HEADER: ${IP_HEADER:-CF-Connecting-IP}
+
+      # ----- Logging -----------------------------------------------------
+      # warn keeps the noise down; flip to info or debug while troubleshooting.
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+
+      # ----- SMTP (optional) ---------------------------------------------
+      # Needed only for invite emails / password hints / 2FA-by-email.
+      # Leave commented if you don't care about those features.
+      # SMTP_HOST: ${SMTP_HOST}
+      # SMTP_FROM: ${SMTP_FROM}
+      # SMTP_PORT: ${SMTP_PORT:-587}
+      # SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      # SMTP_USERNAME: ${SMTP_USERNAME}
+      # SMTP_PASSWORD: ${SMTP_PASSWORD}
+
+    volumes:
+      # SQLite DB, attachments, icon cache, attachments. Backed up by
+      # the NAS as part of /var/lib/docker/volumes/ — see ../backups/.
+      - vaultwarden-data:/data
+
+    ports:
+      # Vaultwarden listens on container port 80. Mapped to host 8200
+      # to avoid clashing with cAdvisor (8080) and Jellyfin (8096).
+      # cloudflared reaches it via host.docker.internal:8200.
+      - "8200:80"
+
+    networks:
+      - vaultwarden
+
+volumes:
+  vaultwarden-data:
+
+networks:
+  vaultwarden:
+    name: vaultwarden
