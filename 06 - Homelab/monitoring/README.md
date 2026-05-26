@@ -5,8 +5,10 @@ Metrics (Prometheus + exporters) and logs (Loki + Promtail) in one compose stack
 | Service | Image | Host port | Purpose |
 |---------|-------|-----------|---------|
 | Prometheus | `prom/prometheus:v2.54.1` | `9090` | Metrics TSDB, 30d retention |
+| Alertmanager | `prom/alertmanager:v0.27.0` | `9093` | Turns firing rules into notifications |
 | Node Exporter | `prom/node-exporter:v1.8.2` | `9100` | Host metrics |
 | cAdvisor | `gcr.io/cadvisor/cadvisor:v0.49.1` | `8080` | Per-container metrics |
+| Blackbox Exporter | `prom/blackbox-exporter:v0.25.0` | `9115` | HTTP/TCP/ICMP probes (uptime monitoring) |
 | Loki | `grafana/loki:3.1.1` | *not exposed* | Log storage |
 | Promtail | `grafana/promtail:3.1.1` | *not exposed* | Log shipper (host + container logs) |
 | Grafana | `grafana/grafana-oss:11.2.0` | `3000` | Dashboards, Prometheus + Loki pre-wired |
@@ -29,9 +31,63 @@ docker compose ps
 
 Then:
 - **Grafana**: `http://<host>:3000` — login with the creds from `.env`. Both *Prometheus* and *Loki* appear under *Connections → Data sources*, pre-wired.
-- **Prometheus**: `http://<host>:9090` → *Status → Targets* — all 5 jobs should be `UP`.
+- **Prometheus**: `http://<host>:9090` → *Status → Targets* — all jobs should be `UP`.
+- **Alertmanager**: `http://<host>:9093` — shows active/silenced alerts.
 - **cAdvisor**: `http://<host>:8080` (raw UI).
 - **Loki**: not exposed to the host on purpose. Query it via Grafana → *Explore* → select Loki datasource → try `{job="docker"}`.
+
+## Alerts
+
+Rules live in `prometheus/rules/alerts.yml`. Out of the box:
+
+| Alert | Severity | Fires when |
+|-------|----------|------------|
+| `InstanceDown` | critical | Any scrape target is unreachable for >2m |
+| `HostHighCpu` | warning | CPU >85% for 10m |
+| `HostHighMemory` | warning | Memory >90% for 10m |
+| `HostDiskFillingUp` | warning | Any real filesystem >85% full for 30m |
+| `HostDiskCritical` | critical | Any real filesystem >95% full for 5m |
+| `ContainerKilled` | warning | A container restarts >3× in 15m |
+| `HttpProbeFailed` | critical | Blackbox HTTP probe failed for >2m |
+| `HttpSlowResponse` | warning | Probe response time avg >2s for 10m |
+| `TlsCertExpiringSoon` | warning | TLS cert <14 days from expiry |
+
+**Where alerts go**: edit `.env` and set `ALERT_WEBHOOK_URL` to a Discord / Slack / ntfy webhook URL. See the comments in `.env.example` for example URLs. Restart Alertmanager after changing:
+
+```bash
+docker compose up -d alertmanager
+```
+
+**Editing rules**: change a file under `prometheus/rules/`, then reload Prometheus without dropping scrapes:
+
+```bash
+curl -X POST http://localhost:9090/-/reload
+```
+
+**Active alerts**: browse to `http://<host>:9093` (Alertmanager UI) — see what's firing, silence stuff while you work on it.
+
+## Synthetic probes (Uptime monitoring)
+
+`blackbox_exporter` replaces Uptime Kuma. Probe targets are listed under the `blackbox-http` job in `prometheus/prometheus.yml`. Edit that file and reload Prometheus to add/remove URLs:
+
+```yaml
+- job_name: blackbox-http
+  params:
+    module: [http_2xx_tls]
+  static_configs:
+    - targets:
+        - https://grafana.yourdomain.com
+        - https://jellyfin.yourdomain.com
+        - https://anything-else.example.com
+```
+
+Probe modules (HTTP, HTTPS-with-TLS, TCP, ICMP) are defined in `blackbox/blackbox.yml`. The `TlsCertExpiringSoon` alert above only works for HTTPS targets using the `http_2xx_tls` module.
+
+Manually test a probe:
+
+```bash
+curl 'http://localhost:9115/probe?target=https://example.com&module=http_2xx_tls'
+```
 
 ## Querying logs (LogQL)
 

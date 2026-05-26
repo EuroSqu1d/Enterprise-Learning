@@ -4,10 +4,26 @@ global:
   external_labels:
     monitor: homelab
 
+# Where to send alerts when a rule below fires.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Files containing alerting rules. Globs expand at startup; restart
+# Prometheus (or `curl -X POST http://localhost:9090/-/reload`) after
+# editing.
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ['localhost:9090']
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
 
   - job_name: node-exporter
     static_configs:
@@ -35,3 +51,34 @@ scrape_configs:
       - targets: ['promtail:9080']
         labels:
           host: homelab
+
+  # ----------------------------------------------------------------------
+  # blackbox_exporter — synthetic probes
+  #
+  # The exporter runs on blackbox:9115. Targets to probe are listed
+  # here, not in the exporter config. The relabel rules below do the
+  # standard blackbox dance: rewrite the scrape target so Prometheus
+  # scrapes blackbox:9115/probe?target=<url>, and the `instance` label
+  # ends up showing the probed URL (not blackbox itself).
+  # ----------------------------------------------------------------------
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx_tls]   # see ../blackbox/blackbox.yml for module list
+    static_configs:
+      - targets:
+          # Add your public URLs here (the ones behind cloudflared).
+          - https://grafana.example.com
+          - https://jellyfin.example.com
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # Self-monitor the blackbox exporter too.
+  - job_name: blackbox
+    static_configs:
+      - targets: ['blackbox:9115']

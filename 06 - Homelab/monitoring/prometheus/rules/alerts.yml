@@ -1,0 +1,129 @@
+# Prometheus alerting rules. Each rule evaluates an expression every
+# 15s; if the expression is true for the `for:` duration, the alert
+# fires and gets shipped to Alertmanager.
+#
+# Severities used here:
+#   warning  -> you'll want to look at this in the next hour or two
+#   critical -> something is actually down or about to be
+
+groups:
+
+  # ----------------------------------------------------------------------
+  # Targets / scrape health — alerts when Prometheus can't talk to a job
+  # ----------------------------------------------------------------------
+  - name: targets
+    rules:
+      - alert: InstanceDown
+        # `up` is the synthetic metric Prometheus emits for every scrape.
+        # 1 = scrape succeeded, 0 = failed. So `up == 0` means we
+        # can't reach the target.
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target {{ $labels.job }}/{{ $labels.instance }} is down"
+          description: "Prometheus could not scrape {{ $labels.instance }} for >2m. The job is {{ $labels.job }}."
+
+  # ----------------------------------------------------------------------
+  # Host-level alerts — driven by node-exporter
+  # ----------------------------------------------------------------------
+  - name: host
+    rules:
+      - alert: HostHighCpu
+        # (1 - idle ratio) averaged over 5m, per host. Alerts at >85%.
+        expr: |
+          100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU on {{ $labels.instance }}"
+          description: "CPU above 85% for 10 minutes (currently {{ $value | printf \"%.1f\" }}%)."
+
+      - alert: HostHighMemory
+        # used = (total - available) / total
+        expr: |
+          100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory on {{ $labels.instance }}"
+          description: "Memory above 90% for 10 minutes (currently {{ $value | printf \"%.1f\" }}%)."
+
+      - alert: HostDiskFillingUp
+        # Real filesystems only (exclude tmpfs/overlay etc.). 85% full.
+        expr: |
+          100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+                  / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) > 85
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk filling on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is {{ $value | printf \"%.1f\" }}% full."
+
+      - alert: HostDiskCritical
+        expr: |
+          100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+                  / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DISK CRITICAL on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "Filesystem {{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% full — services may start failing."
+
+  # ----------------------------------------------------------------------
+  # Container alerts — driven by cAdvisor
+  # ----------------------------------------------------------------------
+  - name: containers
+    rules:
+      - alert: ContainerKilled
+        # A container restarting more than 3x in 15 minutes usually means
+        # something is wrong with its config or a dependency.
+        expr: |
+          changes(container_last_seen{name!=""}[15m]) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} restarting"
+          description: "Container {{ $labels.name }} has restarted >3 times in 15 minutes."
+
+  # ----------------------------------------------------------------------
+  # Synthetic probe alerts — driven by blackbox_exporter
+  # ----------------------------------------------------------------------
+  - name: probes
+    rules:
+      - alert: HttpProbeFailed
+        # probe_success comes from blackbox_exporter, 1 if probe ok else 0.
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP probe failing for {{ $labels.instance }}"
+          description: "blackbox_exporter could not reach {{ $labels.instance }} for >2m."
+
+      - alert: HttpSlowResponse
+        # Average response time over 5m above 2s.
+        expr: avg_over_time(probe_duration_seconds[5m]) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow response from {{ $labels.instance }}"
+          description: "Average response time >2s for 10 minutes ({{ $value | printf \"%.2f\" }}s)."
+
+      - alert: TlsCertExpiringSoon
+        # blackbox_exporter exposes probe_ssl_earliest_cert_expiry as a
+        # Unix timestamp. Warn when <14 days remain.
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires soon"
+          description: "Cert expires in {{ $value | humanizeDuration }}."

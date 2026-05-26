@@ -32,6 +32,7 @@ services:
       - '--web.enable-lifecycle'
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
       # Published so you can hit the Prometheus UI directly. Remove this
@@ -62,6 +63,50 @@ services:
       - /:/rootfs:ro
     ports:
       - "9100:9100"
+    networks:
+      - monitoring
+
+  # Alertmanager: turns firing Prometheus alerts into notifications.
+  # Reads ./alertmanager/alertmanager.yml for routing + receivers.
+  # Receiver URLs come from .env so this file stays committable.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    environment:
+      # Used by alertmanager.yml's webhook_configs. Empty string is fine
+      # at first — Alertmanager will just log "no receiver" until you
+      # set this in .env to a real Discord / Slack / ntfy URL.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      # UI showing active alerts, silence management. Useful while
+      # tuning rules; safe to remove later.
+      - "9093:9093"
+    networks:
+      - monitoring
+
+  # blackbox_exporter: synthetic probes (HTTP, TCP, ICMP). Prometheus
+  # scrapes /probe?target=... and gets back whether the probe succeeded,
+  # how long it took, and (for HTTPS) cert expiry. Replaces Uptime Kuma.
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/blackbox/blackbox.yml'
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    ports:
+      # Not strictly necessary to publish — Prometheus reaches it on
+      # the docker network. Exposed only so you can manually hit
+      # http://<host>:9115/probe?target=...&module=http_2xx to debug.
+      - "9115:9115"
     networks:
       - monitoring
 
@@ -184,6 +229,7 @@ volumes:
   grafana-data:
   loki-data:
   promtail-positions:
+  alertmanager-data:
 
 # Single user-defined bridge network. Docker's built-in DNS lets services
 # resolve each other by name (e.g. `http://prometheus:9090`).

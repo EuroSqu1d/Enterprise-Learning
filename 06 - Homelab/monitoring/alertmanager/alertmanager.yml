@@ -1,0 +1,77 @@
+# Alertmanager: receives alerts from Prometheus, deduplicates them,
+# decides who to tell and via what channel.
+#
+# Flow: Prometheus evaluates rules in ../prometheus/rules/*.yml every
+# 15s. When a condition is true for the rule's `for:` duration, it
+# fires an alert here. Alertmanager applies the routing tree below,
+# debounces repeats, and sends to a receiver.
+#
+# Docs: https://prometheus.io/docs/alerting/latest/configuration/
+
+global:
+  # How often Alertmanager re-sends an active alert if it's still firing.
+  # 4h is sane for personal use — you'll know within minutes anyway, the
+  # repeat is just a "yes, still broken".
+  resolve_timeout: 5m
+
+# ---- Routing -------------------------------------------------------------
+# Single route -> single receiver for now. Add child routes later if you
+# want different alerts going to different channels (e.g. critical -> ntfy,
+# warning -> email).
+route:
+  # Group alerts by their `alertname` and `severity` labels so e.g. ten
+  # containers crashing all become one notification.
+  group_by: ['alertname', 'severity']
+  # Wait this long before sending the first notification for a new group,
+  # in case related alerts fire in quick succession.
+  group_wait: 30s
+  # Wait this long before adding a *new* alert to an *existing* group.
+  group_interval: 5m
+  # Wait this long before re-sending a notification for an already-sent
+  # alert that's still firing.
+  repeat_interval: 4h
+  receiver: 'default'
+
+# ---- Receivers -----------------------------------------------------------
+# These are the actual notification destinations. Templates use env-var
+# expansion (see docker-compose.yml `environment:` block and .env).
+receivers:
+
+  - name: 'default'
+    # Webhook is the most portable — works for Discord, Slack, ntfy,
+    # custom scripts, basically anything that accepts a POST. The URL
+    # comes from $ALERT_WEBHOOK_URL in the environment.
+    #
+    # Discord:  Server Settings -> Integrations -> Webhooks -> New Webhook,
+    #           append `/slack` to the URL so the payload format matches.
+    # Slack:    Incoming Webhooks app -> Add to Slack -> copy URL.
+    # ntfy:     https://ntfy.sh/<your-topic-name> (no signup needed).
+    webhook_configs:
+      - url: '${ALERT_WEBHOOK_URL}'
+        send_resolved: true   # also notify when an alert clears
+
+    # ---- Alternative: email --------------------------------------------
+    # Uncomment + fill in if you'd rather get emails. Needs an SMTP
+    # account (Gmail app password, Mailgun, Postmark, etc.) configured
+    # via env vars in docker-compose.yml.
+    #
+    # email_configs:
+    #   - to: 'you@example.com'
+    #     from: 'alertmanager@example.com'
+    #     smarthost: 'smtp.example.com:587'
+    #     auth_username: '${SMTP_USER}'
+    #     auth_password: '${SMTP_PASSWORD}'
+    #     require_tls: true
+    #     send_resolved: true
+
+# ---- Inhibition rules ----------------------------------------------------
+# Suppress lower-severity alerts when a related higher-severity one is
+# already firing. Example: if the whole host is down, you don't also
+# want twenty "container X is unreachable" alerts.
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    # Both alerts must share these label values for inhibition to apply.
+    equal: ['alertname', 'host']

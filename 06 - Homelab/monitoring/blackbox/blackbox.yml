@@ -1,0 +1,56 @@
+# blackbox_exporter: synthetic probing. Asks "can I reach this URL /
+# host / port from this machine?" and exposes the result as a Prometheus
+# metric. Replaces the need for Uptime Kuma in this stack.
+#
+# Probes are configured here as named "modules"; the actual list of
+# things to probe lives in ../prometheus/prometheus.yml under the
+# `blackbox` scrape job.
+#
+# Docs: https://github.com/prometheus/blackbox_exporter
+
+modules:
+
+  # ----------------------------------------------------------------------
+  # HTTP probes — most things you'll want to monitor
+  # ----------------------------------------------------------------------
+
+  # Plain HTTP GET. Considers any 2xx OR 3xx response a success.
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: []   # empty = default 2xx + 3xx
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: "ip4"
+
+  # HTTPS GET with TLS verification. Use this for public-facing URLs —
+  # blackbox_exporter also exposes cert expiry as a metric, which feeds
+  # the TlsCertExpiringSoon alert in ../prometheus/rules/alerts.yml.
+  http_2xx_tls:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: "ip4"
+      tls_config:
+        insecure_skip_verify: false
+
+  # ----------------------------------------------------------------------
+  # TCP / ICMP probes — for non-HTTP services
+  # ----------------------------------------------------------------------
+
+  # Generic TCP port open check. Useful for SSH, database ports, etc.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+
+  # ICMP ping. Container needs CAP_NET_RAW (granted by docker by default).
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: "ip4"
