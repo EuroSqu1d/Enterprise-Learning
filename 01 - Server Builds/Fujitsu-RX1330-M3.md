@@ -1,5 +1,7 @@
 # Fujitsu PRIMERGY RX1330 M3 — Full Setup & Troubleshooting
 
+> See [`Hardware-Inventory.md`](Hardware-Inventory.md) for the full lab inventory and the authoritative spec sheet. The *Storage Layout* section below reflects the **as-built** state at install time; total storage has since grown to ~8.6 TB — refresh that section with current `lsblk` output when convenient.
+
 ## Hardware Overview
 
 | Component | Detail |

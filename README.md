@@ -19,7 +19,14 @@ This repo documents the processes, troubleshooting steps, and lessons learned fr
 
 ## Hardware in Use
 
+Authoritative details in [`01 - Server Builds/Hardware-Inventory.md`](01%20-%20Server%20Builds/Hardware-Inventory.md).
+
 | Device | Role |
 |--------|------|
-| Fujitsu PRIMERGY RX1330 M3 | Primary hypervisor (mikoshi) |
-| Dell OptiPlex 3070 | Secondary hypervisor |
+| Fujitsu PRIMERGY RX1330 M3 | Primary hypervisor (`mikoshi`) — 32 GB ECC, ~8.6 TB, iRMC |
+| Dell OptiPlex Micro | Secondary Proxmox node — i5, 32 GB, 256 GB SSD |
+| UGREEN 2-bay NAS | Shared storage — 8 TB raw / 4 TB usable (RAID 1, WD Red) |
+| Protectli Vault (4-port) | Edge firewall / router |
+| Cisco Catalyst 1200 (8-port PoE) | Access switch |
+| Juniper EX3200-24T | Core / L3 switch — full Junos |
+| 12U open-frame rack + PDU | Housing & power (rack arriving — depth TBC) |
