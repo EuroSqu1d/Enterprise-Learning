@@ -19,6 +19,8 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 | `uptime-kuma/` | Compose stack | Independent uptime watchdog + public status page |
 | `vaultwarden/` | Compose stack | Self-hosted password manager (Bitwarden-compatible) |
 | `immich/` | Compose stack | Self-hosted photo + video backup (Google Photos replacement) |
+| `authentik/` | Compose stack | Identity provider / SSO across every other service |
+| `matrix/` | Compose stack | Matrix homeserver (Conduit) — federate with friends |
 | `crowdsec/` | Compose stack | Behavioural IPS — blocks attackers at the Cloudflare edge |
 | `speedtest-tracker/` | Compose stack | Scheduled Ookla speedtests, graphs into Grafana |
 | `backups/` | Reference | NAS-side rsync pattern + restore procedure (no service runs here) |
@@ -39,10 +41,12 @@ Single repo, one subdirectory per service (or per tightly-coupled stack). Easier
 5. `uptime-kuma/` — independent uptime watchdog
 6. `vaultwarden/` — password manager
 7. `immich/` — photo + video backup
-8. `crowdsec/` — IPS + Cloudflare bouncer
-9. `speedtest-tracker/` — internet quality history
-10. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
-11. (next services go here)
+8. `authentik/` — SSO across the stack
+9. `matrix/` — federated chat homeserver
+10. `crowdsec/` — IPS + Cloudflare bouncer
+11. `speedtest-tracker/` — internet quality history
+12. `backups/` — wire the NAS to pull `/var/lib/docker/volumes/`
+13. (next services go here)
 
 ## Target host
 

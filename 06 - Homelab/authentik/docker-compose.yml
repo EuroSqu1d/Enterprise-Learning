@@ -1,0 +1,138 @@
+# Authentik: open-source Identity Provider (IdP). Becomes the single
+# login screen for every other service in the homelab. Speaks OAuth2 /
+# OIDC, SAML, LDAP, and has a "proxy outpost" mode for apps that
+# don't natively support any of those (Grafana, Jellyfin, etc.).
+#
+# Stack components:
+#   - postgresql  Persistent store: users, groups, applications, sessions
+#   - redis       Cache + Celery task queue backend
+#   - server      The HTTP service (login UI, OIDC/SAML endpoints, API)
+#   - worker      Background jobs: sending mail, scheduled tasks, healthchecks
+#
+# Design notes (same conventions as the rest of the stack):
+#   - All four images pinned. The server and worker images MUST match
+#     versions (they share migrations).
+#   - AUTHENTIK_SECRET_KEY is REQUIRED (`:?` guard). Used to sign
+#     cookies and tokens — leaking it means session takeover. Generate
+#     once and never rotate without invalidating all sessions.
+#   - PG_PASS required. Postgres is on the internal network only, but
+#     defence in depth — a real password protects against any future
+#     misconfiguration that opens it.
+#   - Own docker network. Authentik's services find each other by
+#     service name (server -> postgresql/redis).
+#   - The default admin user `akadmin` has no password until you finish
+#     the first-run wizard at /if/flow/initial-setup/. Don't skip that.
+
+services:
+
+  postgresql:
+    image: docker.io/library/postgres:16-alpine
+    container_name: authentik-postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASS:?set in .env}
+      POSTGRES_USER: ${PG_USER:-authentik}
+      POSTGRES_DB: ${PG_DB:-authentik}
+    volumes:
+      - authentik-database:/var/lib/postgresql/data
+    networks:
+      - authentik
+
+  redis:
+    image: docker.io/library/redis:alpine
+    container_name: authentik-redis
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 3s
+    volumes:
+      - authentik-redis:/data
+    networks:
+      - authentik
+
+  server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:-2024.10.4}
+    container_name: authentik-server
+    restart: unless-stopped
+    command: server
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?set in .env}
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set in .env}
+      # SMTP (optional, for emails: password resets, invitations, etc.)
+      AUTHENTIK_EMAIL__HOST: ${AUTHENTIK_EMAIL__HOST:-}
+      AUTHENTIK_EMAIL__PORT: ${AUTHENTIK_EMAIL__PORT:-587}
+      AUTHENTIK_EMAIL__USERNAME: ${AUTHENTIK_EMAIL__USERNAME:-}
+      AUTHENTIK_EMAIL__PASSWORD: ${AUTHENTIK_EMAIL__PASSWORD:-}
+      AUTHENTIK_EMAIL__USE_TLS: ${AUTHENTIK_EMAIL__USE_TLS:-true}
+      AUTHENTIK_EMAIL__FROM: ${AUTHENTIK_EMAIL__FROM:-}
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+    ports:
+      # HTTP and HTTPS. cloudflared reaches HTTP on 9000 via
+      # host.docker.internal. The HTTPS port is useful for direct LAN
+      # access without going through the tunnel.
+      - "9000:9000"
+      - "9443:9443"
+    networks:
+      - authentik
+
+  worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_VERSION:-2024.10.4}
+    container_name: authentik-worker
+    restart: unless-stopped
+    command: worker
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Worker needs access to the docker socket ONLY if you plan to use
+    # Authentik to orchestrate docker-based outposts. Skipped here —
+    # we'll deploy outposts as standalone docker compose stacks. If
+    # you want the outpost auto-deploy feature later, add:
+    #   - /var/run/docker.sock:/var/run/docker.sock
+    # Be aware that's root-equivalent access; only enable if needed.
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?set in .env}
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set in .env}
+    volumes:
+      - authentik-media:/media
+      - authentik-templates:/templates
+      - authentik-certs:/certs
+    networks:
+      - authentik
+
+volumes:
+  authentik-database:
+  authentik-redis:
+  authentik-media:
+  authentik-templates:
+  authentik-certs:
+
+networks:
+  authentik:
+    name: authentik

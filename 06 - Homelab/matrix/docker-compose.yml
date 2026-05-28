@@ -1,0 +1,94 @@
+# Matrix homeserver — Conduit edition.
+#
+# Why Conduit instead of Synapse:
+#   - Single binary in Rust, single sqlite-style database, ~50 MB RAM.
+#   - Federates fully with matrix.org and any other Matrix server, so
+#     you can chat with friends who use Element / matrix.org / their
+#     own homeservers exactly as if you were on those.
+#   - Synapse is the reference implementation but is heavyweight
+#     (Python + Postgres + Redis recommended). Worth running once you
+#     have many users; overkill for a personal + small-circle setup.
+#   - If you outgrow Conduit later, you migrate to Synapse — your
+#     room state and federation reputation stay because they live in
+#     other servers, not yours.
+#
+# Design notes (same conventions as the rest of the stack):
+#   - Pinned image tag.
+#   - Server name is BAKED INTO THE DATABASE on first run. Changing
+#     SERVER_NAME later requires wiping the database. Pick carefully
+#     — usually the bare domain (matrix.yourdomain.com would mean
+#     usernames look like @you:matrix.yourdomain.com, ugly). Most
+#     homelabbers use the bare yourdomain.com.
+#   - Federation needs port 8448 OR a .well-known/matrix/server file
+#     at https://yourdomain.com pointing other servers to where the
+#     homeserver actually lives. We use the .well-known approach
+#     because Cloudflare Tunnel handles it cleanly.
+#   - REGISTRATION_TOKEN required — without it anyone on the internet
+#     can register on your server.
+#   - Bridge network, single host port.
+
+services:
+
+  conduit:
+    image: matrixconduit/matrix-conduit:v0.7.0
+    container_name: conduit
+    restart: unless-stopped
+
+    environment:
+      # ----- Required ----------------------------------------------------
+      # Domain part of every user's Matrix ID. After first start this is
+      # immutable — to change it you must wipe the data volume.
+      # Use your bare domain so handles look @you:yourdomain.com.
+      CONDUIT_SERVER_NAME: ${SERVER_NAME:?set in .env}
+
+      # ----- Database ----------------------------------------------------
+      CONDUIT_DATABASE_BACKEND: rocksdb
+      CONDUIT_DATABASE_PATH: /var/lib/matrix-conduit/
+      # Cache size in MB. 200 is comfortable for a small homeserver.
+      CONDUIT_DB_CACHE_CAPACITY_MB: 200
+
+      # ----- Server config -----------------------------------------------
+      # Conduit binds inside the container.
+      CONDUIT_PORT: 6167
+      # Trust the X-Forwarded-* headers from cloudflared so rate limits
+      # see real client IPs.
+      CONDUIT_TRUSTED_SERVERS: '["matrix.org"]'
+      CONDUIT_ADDRESS: 0.0.0.0
+      CONDUIT_MAX_REQUEST_SIZE: 20_000_000   # 20 MB upload cap
+
+      # ----- Registration ------------------------------------------------
+      # Anyone who knows this token can register an account. Treat it
+      # like a password. Generate with: openssl rand -base64 24
+      CONDUIT_REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:?set in .env}
+      # When true, registration requires the token above. When false,
+      # only the first user (you) can register and it then closes
+      # automatically. We keep it on so you can invite friends.
+      CONDUIT_ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+
+      # ----- Federation --------------------------------------------------
+      # When true, you can talk to other Matrix servers (matrix.org,
+      # your friends' homeservers, public rooms). Set false for a
+      # walled-garden personal server.
+      CONDUIT_ALLOW_FEDERATION: ${ALLOW_FEDERATION:-true}
+
+      # Anonymous statistics back to the Conduit project. Off by
+      # default; flip true if you want to help the project.
+      CONDUIT_ALLOW_CHECK_FOR_UPDATES: "false"
+
+    volumes:
+      - conduit-data:/var/lib/matrix-conduit
+
+    ports:
+      # Client-server API. cloudflared reaches this on
+      # host.docker.internal:8448 for both matrix.<domain> traffic.
+      - "8448:6167"
+
+    networks:
+      - matrix
+
+volumes:
+  conduit-data:
+
+networks:
+  matrix:
+    name: matrix
